@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Live Stream</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        h2 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        #video-container {
+            margin-bottom: 20px;
+        }
+
+        #localVideo,
+        #remoteVideo {
+            width: 100%;
+            max-height: 400px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+
+        #controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        #commentInput {
+            flex-grow: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .connection-status {
+            background-color: #f8f8f8;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            border-left: 4px solid #4CAF50;
+        }
+
+        #chat-box {
+            height: 200px;
+            overflow-y: scroll;
+            border: 1px solid #ccc;
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            margin-bottom: 20px;
+        }
+
+        .chat-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+
+        .viewer-count {
+            background-color: #4CAF50;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>Live Streaming</h2>
+
+    <div class="connection-status">
+        Connection status: <span id="connection-status">Connecting...</span>
+    </div>
+
+    <div id="video-container">
+        <video id="localVideo" autoplay muted playsinline></video>
+        <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+    <h4>If video not showing then click on video section to start video</h4>
+    <div id="controls">
+        <button onclick="sendLike()">👍 Like</button>
+        <button onclick="sendShare()">🔁 Share</button>
+        <input id="commentInput" type="text" placeholder="Type a comment...">
+        <button onclick="sendComment()">💬 Comment</button>
+    </div>
+
+    <div class="chat-header">
+        <h3>Chat</h3>
+        <span class="viewer-count" id="viewer-count">0 viewers</span>
+    </div>
+    <div id="chat-box"></div>
+
+    <script>
+        // DOM Elements
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const chatBox = document.getElementById('chat-box');
+        const connectionStatus = document.getElementById('connection-status');
+        const viewerCount = document.getElementById('viewer-count');
+        const room = new URLSearchParams(window.location.search).get('room');
+        console.log(room, "vfhlflhiflhkgofph")
+
+        // Configuration
+        //const wsUrl = `wss://dae8-49-43-96-53.ngrok-free.app/ws/stream/?room=${room}`;
+        const wsUrl = `ws://localhost:8000/ws/stream/?room=${room}`;
+        const isBroadcaster = new URLSearchParams(window.location.search).get('role') === 'broadcaster';
+        const rtcConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                {
+                    urls: 'turn:numb.viagenie.ca',
+                    username: 'webrtc@live.com',
+                    credential: 'muazkh'
+                }
+            ],
+            iceCandidatePoolSize: 10
+        };
+
+        // Application state
+        let peerConnection = null;
+        let localStream = null;
+        let ws = null;
+        let isConnected = false;
+        let reconnectAttempts = 0;
+        let statsInterval = null;
+
+        // Initialize the application
+        window.addEventListener('load', initialize);
+
+        async function initialize() {
+            updateStatus('Initializing...');
+
+            // Setup based on role
+            if (isBroadcaster) {
+                document.title = 'Live Stream - Broadcaster';
+                remoteVideo.style.display = 'none';
+
+                try {
+                    updateStatus('Requesting camera access...');
+                    localStream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 },
+                            frameRate: { ideal: 30 }
+                        },
+                        audio: true
+                    });
+
+                    localVideo.srcObject = localStream;
+                    updateStatus('Camera access granted. Ready to broadcast.');
+
+                    // Log video tracks to help debug
+                    console.log('Local stream tracks:',
+                        localStream.getTracks().map(track => `${track.kind}: ${track.id} (${track.enabled ? 'enabled' : 'disabled'})`));
+
+                    // Ensure we can see the video locally
+                    localVideo.play().catch(err => {
+                        console.warn('Could not auto-play local video:', err);
+                        updateStatus('Click to start video preview', true);
+
+                        // Add click handler for manual play
+                        localVideo.addEventListener('click', () => {
+                            localVideo.play().catch(err => console.error('Play failed:', err));
+                        });
+                    });
+                } catch (err) {
+                    updateStatus('Camera access denied: ' + err.message, true);
+                    console.error('Failed to get user media:', err);
+                    return;
+                }
+            } else {
+                // Viewer setup
+                document.title = 'Live Stream - Viewer';
+                localVideo.style.display = 'none';
+                updateStatus('Ready to view broadcast.');
+            }
+
+            // Connect to signaling server
+            connectToSignalingServer();
+        }
+
+        function connectToSignalingServer() {
+            updateStatus(isBroadcaster ? 'Setting up broadcast...' : 'Connecting to broadcast...');
+
+            // Close any existing connection
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
+
+            // Create new WebSocket connection
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('WebSocket connection established');
+                updateStatus(isBroadcaster ? 'Ready to broadcast' : 'Connected, waiting for stream');
+                reconnectAttempts = 0;
+
+                // If viewer, send join message
+                if (!isBroadcaster) {
+                    console.log('Sending join request');
+                    ws.send(JSON.stringify({ join: true }));
+                }
+            };
+
+            ws.onclose = (event) => {
+                console.log('WebSocket closed:', event.code, event.reason);
+                updateStatus('Connection lost. Reconnecting...', true);
+
+                // Clean up peer connection
+                closePeerConnection();
+
+                // Increment reconnect attempts and try again with exponential backoff
+                reconnectAttempts++;
+                const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 10000);
+                setTimeout(connectToSignalingServer, delay);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                updateStatus('Connection error', true);
+            };
+
+            ws.onmessage = handleSignalingMessage;
+        }
+
+        async function handleSignalingMessage(event) {
+            try {
+                const data = JSON.parse(event.data);
+                console.log('Received message:', data);
+
+                // Handle viewer count updates
+                if (data.type === "viewer_count" && data.count !== undefined) {
+                    viewerCount.textContent = `${data.count} viewer${data.count !== 1 ? 's' : ''}`;
+                }
+
+                // Handle chat messages
+                if (data.comment) {
+                    addChatMessage(`💬 ${data.comment}`);
+                } else if (data.like) {
+                    addChatMessage(`👍 Someone liked the stream`);
+                } else if (data.share) {
+                    addChatMessage(`🔁 Stream was shared`);
+                }
+
+                // Handle WebRTC signaling
+                if (data.join && isBroadcaster) {
+                    console.log('Viewer joined, creating offer');
+                    updateStatus('Viewer joined. Creating connection...');
+
+                    try {
+                        await createPeerConnection();
+                        const offer = await peerConnection.createOffer({
+                            offerToReceiveAudio: true,
+                            offerToReceiveVideo: true
+                        });
+                        await peerConnection.setLocalDescription(offer);
+
+                        console.log('Sending offer to viewer');
+                        ws.send(JSON.stringify({ offer: peerConnection.localDescription }));
+                    } catch (err) {
+                        console.error('Error creating offer:', err);
+                        updateStatus('Failed to create connection: ' + err.message, true);
+                    }
+                }
+
+                if (data.offer && !isBroadcaster) {
+                    console.log('Received offer from broadcaster');
+                    updateStatus('Received stream offer. Connecting...');
+
+                    try {
+                        await createPeerConnection();
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+                        console.log('Remote description set successfully');
+
+                        const answer = await peerConnection.createAnswer();
+                        await peerConnection.setLocalDescription(answer);
+
+                        console.log('Sending answer to broadcaster');
+                        ws.send(JSON.stringify({ answer: peerConnection.localDescription }));
+
+                        // Start monitoring connection stats
+                        startConnectionMonitoring();
+                    } catch (err) {
+                        console.error('Error handling offer:', err);
+                        updateStatus('Connection error: ' + err.message, true);
+                    }
+                }
+
+                if (data.answer && isBroadcaster && peerConnection) {
+                    console.log('Received answer from viewer');
+                    try {
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+                        updateStatus('Connected to viewer');
+                    } catch (err) {
+                        console.error('Error setting remote description:', err);
+                    }
+                }
+
+                if (data.candidate && peerConnection) {
+                    console.log('Received ICE candidate');
+                    try {
+                        // Only add candidate if we have remote description set
+                        if (peerConnection.remoteDescription && peerConnection.remoteDescription.type) {
+                            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                        } else {
+                            console.log('Skipping ICE candidate - no remote description yet');
+                        }
+                    } catch (err) {
+                        console.log('Could not add ICE candidate:', err);
+                    }
+                }
+            } catch (error) {
+                console.error('Error handling message:', error);
+            }
+        }
+
+        async function createPeerConnection() {
+            // Close any existing connection
+            closePeerConnection();
+
+            console.log('Creating new RTCPeerConnection');
+            peerConnection = new RTCPeerConnection(rtcConfig);
+
+            // Handle ICE candidates
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    console.log('Generated ICE candidate:', event.candidate.candidate.substr(0, 50) + '...');
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ candidate: event.candidate }));
+                    }
+                } else {
+                    console.log('ICE candidate gathering complete');
+                }
+            };
+
+            // ICE gathering state changes
+            peerConnection.onicegatheringstatechange = () => {
+                console.log('ICE gathering state:', peerConnection.iceGatheringState);
+            };
+
+            // Overall connection state changes
+            peerConnection.onconnectionstatechange = () => {
+                console.log('Connection state changed to:', peerConnection.connectionState);
+                switch (peerConnection.connectionState) {
+                    case 'connected':
+                        updateStatus(isBroadcaster ? 'Broadcasting live' : 'Viewing live stream');
+                        isConnected = true;
+                        break;
+                    case 'disconnected':
+                    case 'failed':
+                        updateStatus('Connection lost', true);
+                        isConnected = false;
+                        if (!isBroadcaster && ws && ws.readyState === WebSocket.OPEN) {
+                            setTimeout(() => {
+                                ws.send(JSON.stringify({ join: true }));
+                            }, 2000);
+                        }
+                        break;
+                    case 'closed':
+                        updateStatus('Connection closed');
+                        isConnected = false;
+                        break;
+                }
+            };
+
+            // ICE connection specific state
+            peerConnection.oniceconnectionstatechange = () => {
+                console.log('ICE connection state:', peerConnection.iceConnectionState);
+                if (peerConnection.iceConnectionState === 'failed') {
+                    console.log('ICE connection failed - attempting restart');
+                    try {
+                        if (peerConnection.restartIce) {
+                            peerConnection.restartIce();
+                        }
+                    } catch (err) {
+                        console.error('Error restarting ICE:', err);
+                    }
+                }
+            };
+
+            // Signaling state changes
+            peerConnection.onsignalingstatechange = () => {
+                console.log('Signaling state:', peerConnection.signalingState);
+            };
+
+            // Handle incoming remote tracks (only for viewer)
+            peerConnection.ontrack = (event) => {
+                console.log('Received remote track:', event.track.kind);
+
+                if (!remoteVideo.srcObject) {
+                    // No stream yet: use incoming stream
+                    if (event.streams && event.streams[0]) {
+                        remoteVideo.srcObject = event.streams[0];
+                        console.log('Set remote video source from event stream');
+                    } else {
+                        const newStream = new MediaStream();
+                        newStream.addTrack(event.track);
+                        remoteVideo.srcObject = newStream;
+                        console.log('Created new MediaStream with track');
+                    }
+
+                    // Try autoplay with fallback
+                    remoteVideo.play().catch(err => {
+                        console.warn('Could not auto-play remote video:', err);
+                        updateStatus('Click the video to start', true);
+
+                        const clickHandler = () => {
+                            remoteVideo.play().then(() => {
+                                console.log('Manual play successful');
+                                updateStatus('Streaming');
+                                remoteVideo.removeEventListener('click', clickHandler);
+                            }).catch(e => {
+                                console.error('Manual play failed:', e);
+                            });
+                        };
+
+                        remoteVideo.addEventListener('click', clickHandler);
+                    });
+
+                } else if (remoteVideo.srcObject instanceof MediaStream) {
+                    // Stream already exists: add new track if not duplicate
+                    const existingTracks = remoteVideo.srcObject.getTracks();
+                    const hasTrack = existingTracks.some(t => t.id === event.track.id);
+                    if (!hasTrack) {
+                        remoteVideo.srcObject.addTrack(event.track);
+                        console.log('Added track to existing stream:', event.track.kind);
+                    }
+                }
+
+                // Update status when we get a video track
+                if (event.track.kind === 'video') {
+                    updateStatus('Receiving video stream');
+                }
+
+                // Listen for track end
+                event.track.onended = () => {
+                    console.log('Remote track ended:', event.track.kind);
+                };
+
+                // Debugging: list tracks
+                const tracks = remoteVideo.srcObject ? remoteVideo.srcObject.getTracks() : [];
+                console.log('Remote stream now has tracks:',
+                    tracks.map(t => `${t.kind}: ${t.id} (${t.enabled ? 'enabled' : 'disabled'})`));
+            };
+
+            // If broadcaster, add local tracks
+            if (isBroadcaster && localStream) {
+                console.log('Adding local tracks to peer connection');
+                localStream.getTracks().forEach(track => {
+                    console.log('Adding track:', track.kind, track.id);
+                    peerConnection.addTrack(track, localStream);
+                });
+            }
+
+            return peerConnection;
+        }
+
+
+        function closePeerConnection() {
+            if (peerConnection) {
+                console.log('Closing existing peer connection');
+
+                // Clear monitoring interval
+                if (statsInterval) {
+                    clearInterval(statsInterval);
+                    statsInterval = null;
+                }
+
+                // Clear remote video
+                if (!isBroadcaster && remoteVideo.srcObject) {
+                    const tracks = remoteVideo.srcObject.getTracks();
+                    tracks.forEach(track => track.stop());
+                    remoteVideo.srcObject = null;
+                }
+
+                // Close the connection
+                peerConnection.close();
+                peerConnection = null;
+            }
+        }
+
+        function startConnectionMonitoring() {
+            // Clear existing interval if any
+            if (statsInterval) {
+                clearInterval(statsInterval);
+            }
+
+            // Set up periodic stats logging
+            statsInterval = setInterval(async () => {
+                if (peerConnection && peerConnection.connectionState === 'connected') {
+                    try {
+                        const stats = await peerConnection.getStats();
+                        let hasVideoReceiving = false;
+                        let videoBytesReceived = 0;
+                        let videoPacketsReceived = 0;
+                        let videoFramesDecoded = 0;
+
+                        stats.forEach(report => {
+                            if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                                hasVideoReceiving = true;
+                                videoBytesReceived = report.bytesReceived;
+                                videoPacketsReceived = report.packetsReceived;
+                                videoFramesDecoded = report.framesDecoded || 0;
+                            }
+                        });
+
+                        if (hasVideoReceiving) {
+                            console.log(`Receiving video: ${(videoBytesReceived / 1024 / 1024).toFixed(2)} MB, ${videoPacketsReceived} packets, ${videoFramesDecoded} frames`);
+                        } else {
+                            console.log('No video data being received');
+                        }
+                    } catch (err) {
+                        console.error('Error getting connection stats:', err);
+                    }
+                }
+            }, 5000);
+        }
+
+        // UI Helper Functions
+        function updateStatus(message, isError = false) {
+            connectionStatus.textContent = message;
+            connectionStatus.style.color = isError ? 'red' : 'green';
+            console.log('Status:', message);
+        }
+
+        function addChatMessage(message) {
+            const p = document.createElement('p');
+            p.innerText = message;
+            chatBox.appendChild(p);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        // User Interaction Functions
+        function sendLike() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ like: true }));
+                addChatMessage('👍 You liked the stream');
+            }
+        }
+
+        function sendShare() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ share: true }));
+                addChatMessage('🔁 You shared the stream');
+            }
+        }
+
+        function sendComment() {
+            const input = document.getElementById('commentInput');
+            const comment = input.value.trim();
+            if (comment && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ comment: comment }));
+                input.value = '';
+            }
+        }
+
+        // Handle comment submission with Enter key
+        document.getElementById('commentInput').addEventListener('keypress', function (event) {
+            if (event.key === 'Enter') {
+                sendComment();
+            }
+        });
+
+        // Handle page unload
+        window.addEventListener('beforeunload', () => {
+            // Close connections cleanly
+            closePeerConnection();
+
+            if (ws) {
+                ws.close();
+            }
+
+            // Stop all tracks
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+        });
+    </script>
+</body>
+
+</html>

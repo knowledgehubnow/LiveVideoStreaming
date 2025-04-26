@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Streams</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+        }
+
+        .start-session {
+            margin-bottom: 30px;
+        }
+
+        .start-button {
+            padding: 10px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .start-button:hover {
+            background-color: #0056b3;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        table, th, td {
+            border: 1px solid #ccc;
+        }
+
+        th, td {
+            padding: 10px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f9f9f9;
+        }
+
+        .join-button {
+            padding: 6px 12px;
+            background-color: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+        }
+
+        .join-button:hover {
+            background-color: #218838;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Live Streams</h1>
+
+    <!-- Start New Session -->
+    <div class="start-session">
+        <form method="post" action="{% url 'start_stream' %}">
+            {% csrf_token %}
+            <button type="submit" class="start-button">Go Live</button>
+        </form>
+    </div>
+
+    <!-- Live Stream List -->
+    <table>
+        <thead>
+            <tr>
+                <th>Room Name</th>
+                <th>Is Streaming</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for stream in streams %}
+                <tr>
+                    <td>{{ stream.room }}</td>
+                    <td>{{ stream.is_streaming|yesno:"Yes,No" }}</td>
+                    <td>
+                        <a href="{% url 'stream' %}?room={{ stream.room }}" class="join-button">Join Stream</a>
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+</body>
+</html>

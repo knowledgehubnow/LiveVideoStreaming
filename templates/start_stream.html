@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Start Live Stream</title>
+  <style>
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background: #f0f2f5;
+      font-family: Arial, sans-serif;
+    }
+    .start-button {
+      padding: 15px 30px;
+      font-size: 18px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .start-button:hover {
+      background-color: #45a049;
+    }
+  </style>
+</head>
+<body>
+
+  <form method="post">
+    {% csrf_token %}
+    <button type="submit" class="start-button">Start Session</button>
+  </form>
+
+</body>
+</html>
