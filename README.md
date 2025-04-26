@@ -33,7 +33,7 @@ bash
 Copy
 Edit
 git clone https://github.com/yourusername/video-streaming-project.git
-cd video-streaming-project
+cd LiveStreaming
 2. Install Backend Dependencies
 bash
 Copy
@@ -50,9 +50,9 @@ python manage.py runserver
 📝 Note: Ensure WebSocket support (ASGI mode enabled via daphne or uvicorn for production).
 
 4. Open in Browser
-Broadcaster: Go to http://127.0.0.1:8000/broadcast/
+Broadcaster: Go to http://127.0.0.1:8000/ and click on go live to start streaming
 
-Viewer: Go to http://127.0.0.1:8000/view/
+Viewer: Go to http://127.0.0.1:8000/ and click on any streming from list to join
 
 ⚙️ WebRTC Core Concepts Used
 RTCPeerConnection
@@ -95,9 +95,6 @@ For production deployment, use secure WebSockets (wss://) and HTTPS.
 🤝 Contributions
 Pull requests are welcome!
 Feel free to open issues if you want new features or find bugs.
-
-📜 License
-This project is licensed under the MIT License.
 
 🚀 Let's Stream Live!
 Would you like me to also create a small version for just the README.txt format if you want something even simpler without GitHub markdown formatting?
