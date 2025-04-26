@@ -89,9 +89,6 @@ Browser permissions (camera, microphone) are required.
 
 For production deployment, use secure WebSockets (wss://) and HTTPS.
 
-📸 Screenshots
-(You can add screenshots of the Broadcast page and Viewer page here.)
-
 🤝 Contributions
 Pull requests are welcome!
 Feel free to open issues if you want new features or find bugs.
